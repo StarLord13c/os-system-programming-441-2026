@@ -1,0 +1,182 @@
+from pathlib import Path
+import os
+import threading
+import time
+import random
+
+# 1. Шляхи до основних папок і базові налаштування
+base = Path("lab_os_1")
+input_dir = base / "input"
+output_dir = base / "output"
+logs_dir = base / "logs"
+
+# Кількість файлів для трьох етапів тестування
+test_sizes = [100, 300, 500]
+
+# Мінімальна кількість рядків у кожному файлі
+lines_per_file = 1000
+
+# Файли для збереження результатів
+sequential_result_file = output_dir / "result_sequential.txt"
+threaded_result_file = output_dir / "result_threaded.txt"
+time_report_file = output_dir / "time_report.txt"
+
+# Набір слів для генерації випадкового тексту
+word_pool = [
+    "linux", "python", "thread", "file", "system", "process", "input",
+    "output", "random", "text", "analysis", "performance", "pathlib",
+    "module", "directory", "access", "mode", "data", "sequential",
+    "parallel", "testing", "result", "character", "line", "word"
+]
+
+# 2. Створення структури каталогів
+base.mkdir(exist_ok=True)
+input_dir.mkdir(exist_ok=True)
+output_dir.mkdir(exist_ok=True)
+logs_dir.mkdir(exist_ok=True)
+
+# 3. Встановлення прав доступу до каталогів
+os.chmod(base, 0o755)
+os.chmod(input_dir, 0o755)
+os.chmod(output_dir, 0o755)
+os.chmod(logs_dir, 0o700)
+
+# 4. Допоміжні функції
+
+# Видалення всіх старих .txt файлів із папки input
+def clear_input_files():
+    for file in input_dir.glob("*.txt"):
+        file.unlink()
+
+# Генерація одного випадкового рядка з 8–16 слів
+def generate_random_line():
+    word_count = random.randint(8, 16)
+    words = [random.choice(word_pool) for _ in range(word_count)]
+    return " ".join(words)
+
+# Генерація потрібної кількості тестових файлів
+def generate_test_files(file_count):
+    # Перед створенням нової вибірки очищаємо старі файли
+    clear_input_files()
+
+    # Створюємо file_1.txt, file_2.txt, ... file_N.txt
+    for i in range(1, file_count + 1):
+        with open(input_dir / f"file_{i}.txt", "w", encoding="utf-8") as f:
+            # У кожен файл записуємо не менше 1000 рядків випадкового тексту
+            for _ in range(lines_per_file):
+                f.write(generate_random_line() + "\n")
+
+# Аналіз одного файлу: підрахунок рядків, слів і символів
+def analyze_file(path):
+    with open(path, "r", encoding="utf-8") as f:
+        text = f.read()
+
+    lines = len(text.splitlines())
+    words = len(text.split())
+    chars = len(text)
+
+    # Повертаємо результат у потрібному для звіту форматі
+    return f"{path.name}  lines={lines}  words={words}  chars={chars}"
+
+# 5. Послідовна обробка файлів
+def run_sequential(file_count):
+    # Фіксуємо початок вимірювання часу
+    start = time.perf_counter()
+    results = []
+
+    # По черзі аналізуємо всі файли з папки input
+    for file in input_dir.glob("*.txt"):
+        results.append(analyze_file(file))
+
+    # Обчислюємо загальний час послідовної обробки
+    seq_time = time.perf_counter() - start
+
+    # Записуємо результати у файл result_sequential.txt
+    with open(sequential_result_file, "a", encoding="utf-8") as f:
+        f.write(f"=== {file_count} files ===\n")
+        for line in results:
+            f.write(line + "\n")
+        f.write("\n")
+
+    return seq_time
+
+# 6. Багатопотокова обробка файлів
+def run_threaded(file_count):
+    # Фіксуємо початок вимірювання часу
+    start = time.perf_counter()
+    results = []
+    lock = threading.Lock()
+    threads = []
+
+    # Функція, яку виконуватиме кожен потік
+    def worker(file):
+        result = analyze_file(file)
+        # Блокуємо доступ до списку results, щоб потоки не заважали один одному
+        with lock:
+            results.append(result)
+
+    # Створюємо окремий потік для кожного файлу
+    for file in input_dir.glob("*.txt"):
+        t = threading.Thread(target=worker, args=(file,))
+        threads.append(t)
+        t.start()
+
+    # Чекаємо завершення всіх потоків
+    for t in threads:
+        t.join()
+
+    # Обчислюємо загальний час багатопотокової обробки
+    thr_time = time.perf_counter() - start
+
+    # Сортуємо результати, щоб вони були у правильному порядку
+    results.sort()
+
+    # Записуємо результати у файл result_threaded.txt
+    with open(threaded_result_file, "a", encoding="utf-8") as f:
+        f.write(f"=== {file_count} files ===\n")
+        for line in results:
+            f.write(line + "\n")
+        f.write("\n")
+
+    return thr_time
+
+# 7. Підготовка файлів для результатів
+# Очищаємо старі результати перед новим запуском програми
+with open(sequential_result_file, "w", encoding="utf-8") as f:
+    f.write("Sequential results\n\n")
+
+with open(threaded_result_file, "w", encoding="utf-8") as f:
+    f.write("Threaded results\n\n")
+
+with open(time_report_file, "w", encoding="utf-8") as f:
+    f.write("Time report\n\n")
+
+# 8. Основний цикл тестування
+# Послідовно запускаємо перевірку для 100, 300 і 500 файлів
+for size in test_sizes:
+    print(f"\nTesting with {size} files...")
+
+    # Генеруємо нову вибірку файлів
+    generate_test_files(size)
+
+    # Запускаємо послідовну обробку
+    seq_time = run_sequential(size)
+
+    # Запускаємо багатопотокову обробку
+    thr_time = run_threaded(size)
+
+    # Виводимо час виконання в консоль
+    print(f"Sequential mode ({size} files): {seq_time:.6f} sec.")
+    print(f"Multi-threaded mode ({size} files): {thr_time:.6f} sec.")
+
+    # Записуємо заміри часу у файл time_report.txt
+    with open(time_report_file, "a", encoding="utf-8") as f:
+        f.write(f"{size} files:\n")
+        f.write(f"Sequential: {seq_time:.6f} sec.\n")
+        f.write(f"Multi-threaded: {thr_time:.6f} sec.\n\n")
+
+# 9. Фінальний вивід у консоль
+print("\nComparison completed.")
+print(f"Sequential results saved to: {sequential_result_file}")
+print(f"Threaded results saved to: {threaded_result_file}")
+print(f"Time report saved to: {time_report_file}")
